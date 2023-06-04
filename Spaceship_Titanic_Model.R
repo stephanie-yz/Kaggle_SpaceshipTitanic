@@ -6,6 +6,7 @@
 ###       added to ensemble and made it the tie breaker
 ### v4 - change adaboost w/tree parameter to 2 to reduce overfitting
 ### v5 - change tiebreaker to be rf
+### v6 - remove adaboost and tiebreaker logic from ensemble, investigate clustering in amenities
 
 #################### Load packages ####################
 library(tidyverse)
@@ -100,7 +101,7 @@ train_clean %>% ggplot(aes(Deck, Age)) + geom_boxplot()
 
 
   #amenities histogram
-amenities_cols <- c("RoomService","FoodCourt","ShoppingMall","Spa","VRDeck","TotalSpend")
+amenities_cols <- c("RoomService","FoodCourt","ShoppingMall","Spa","VRDeck")
 amenities_1way <- NULL
 for (coln in amenities_cols) {
   amenities_1way[[coln]] <- train_clean %>% ggplot(aes_string(coln)) + 
@@ -116,7 +117,17 @@ deck_avgspend <- train_clean %>% group_by(VIP, Deck) %>% summarise(TotalSpend_av
 
 ### Correlation between amenities spend
 train_clean %>% select(amenities_cols) %>% pairs
-train_clean %>% select(amenities_cols) %>% na.omit() %>% cor()
+train_cor <- train_clean %>% select(amenities_cols) %>% na.omit() %>% cor()
+image(train_cor); train_cor
+
+### Clustering amenities
+train_clean_amenities <- train_clean %>% select(amenities_cols) 
+train_clusters <- kmeans(train_clean_amenities, centers = 3, iter.max = 15, nstart = 5)
+train_clusters$centers #appears to have no clear clusters
+cbind(train_clean_amenities, cluster = factor(train_clusters$cluster)) %>% ggplot(aes(Spa, VRDeck, colour = cluster)) +
+  geom_point() + scale_x_sqrt() + scale_y_sqrt() + 
+  geom_point(data = data.frame(train_clusters$centers[, c('Spa', 'VRDeck')], cluster = c('1','2','3')), 
+             aes(Spa, VRDeck), shape = 8, size = 3, stroke = 3)
 
 
 
@@ -166,7 +177,7 @@ confusionMatrix(factor(fit_adab_allvars$class), train_input$Transported)
 plot(fit_adab_allvars$weights)
 
 
-### AdaBoost - trees ###
+### AdaBoost - trees ### (not used because of overfitting)
 set.seed(123)
 tic()
 fit_adab2_allvars <- train_input %>% adaboost(Transported ~ ., data = ., nIter = 2) #2 is randomly chosen to try avoid overfitting
@@ -176,15 +187,25 @@ confusionMatrix(predict(fit_adab2_allvars, train_input)$class, train_input$Trans
 plot(fit_adab2_allvars$weights)
 
 
+## GAM ### -- can't get it to work
+# set.seed(123)
+# tic()
+# gam_fml <- as.formula(paste('Transported ~ ', paste('s(', amenities_cols, ')', collapse = '+'), '+',
+#                             paste(setdiff(colnames(train_input), amenities_cols), collapse = '+')))
+# fit_gam_allvars <- train_input %>% train(gam_fml, data = ., method = 'gam')
+# train_input %>% mgcv::gam(Transported ~ s(VRDeck) , data = .)
+# toc()
+# confusionMatrix(fit_gam_allvars)
+
+
 
 ### Ensemble - adaboost is tie breaker###
 predict_ensb_train <- data.frame(glm = predict(fit_glm_allvars), rf = predict(fit_rf_allvars), 
-                                 knn = predict(fit_knn_allvars), 
-                                 adab_tree = predict(fit_adab2_allvars, train_input)$class)
-# predict_ensb_train <- predict_ensb_train %>% mutate(maj_vote = ifelse(rowSums(. == 'False')/ncol(.) > 0.5, 'False', 'True'))
-predict_ensb_train <- predict_ensb_train %>% mutate(maj_vote = case_when(rowSums(. == 'False')/ncol(.) == 0.5 ~ as.character(rf),
-                                                                         rowSums(. == 'False')/ncol(.) > 0.5 ~ 'False',
-                                                                         TRUE ~ 'True'))
+                                 knn = predict(fit_knn_allvars))
+predict_ensb_train <- predict_ensb_train %>% mutate(maj_vote = ifelse(rowSums(. == 'False')/ncol(.) > 0.5, 'False', 'True'))
+# predict_ensb_train <- predict_ensb_train %>% mutate(maj_vote = case_when(rowSums(. == 'False')/ncol(.) == 0.5 ~ as.character(rf),
+#                                                                          rowSums(. == 'False')/ncol(.) > 0.5 ~ 'False',
+#                                                                          TRUE ~ 'True'))
 predict_ensb_train$maj_vote <- as.factor(predict_ensb_train$maj_vote)
 confusionMatrix(predict_ensb_train$maj_vote, train_input$Transported)
 
@@ -243,14 +264,13 @@ predict_adab2_test <- predict(fit_adab2_allvars, test_input)$class
 
 
 
-predict_ensb_test <- data.frame(glm = predict_glm_test, rf = predict_rf_test, knn = predict_knn_test, 
-                                adab_tree = predict_adab2_test)
-# predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = ifelse(rowSums(. == 'False')/ncol(.) > 0.5, 'False', 'True'))
-predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = case_when(rowSums(. == 'False')/ncol(.) == 0.5 ~ as.character(rf),
-                                                                         rowSums(. == 'False')/ncol(.) > 0.5 ~ 'False',
-                                                                         TRUE ~ 'True'))
+predict_ensb_test <- data.frame(glm = predict_glm_test, rf = predict_rf_test, knn = predict_knn_test)
+predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = ifelse(rowSums(. == 'False')/ncol(.) > 0.5, 'False', 'True'))
+# predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = case_when(rowSums(. == 'False')/ncol(.) == 0.5 ~ as.character(rf),
+#                                                                          rowSums(. == 'False')/ncol(.) > 0.5 ~ 'False',
+#                                                                          TRUE ~ 'True'))
 predict_ensb_test$maj_vote <- as.factor(predict_ensb_test$maj_vote)
 
 submission <- data.frame(PassengerId = test_clean$PassengerId, Transported = predict_ensb_test$maj_vote)
-write.csv(submission, 'submissions_v5.csv', row.names = F, quote = F)
+write.csv(submission, 'submissions_v6.csv', row.names = F, quote = F)
 
