@@ -2,7 +2,8 @@
 #################### Version Log ####################
 ### v1 - first attempt: ensemble model with glm, rf and knn; used mostly default settings
 ### v2 - tuned/optimised rf mtry parameter; bin age in 10 year bands
-
+### v3 - train adaboost with trees (no tuning, parameter chosen approximately), 
+###       added to ensemble and made it the tie breaker
 
 #################### Load packages ####################
 library(tidyverse)
@@ -10,7 +11,10 @@ library(ggplot2)
 library(gridExtra)
 library(caret)
 library(randomForest)
+library(adabag)
 library(tictoc)
+adapackageurl <- "https://cran.r-project.org/src/contrib/Archive/fastAdaboost/fastAdaboost_1.0.0.tar.gz"
+install.packages(adapackageurl, repos=NULL, type="source")
 
 #################### Load data ####################
 wd <- 'C:/Users/HP/Documents/At University/Self-Education/R/Kaggle_Spaceship_Titanic'
@@ -116,6 +120,7 @@ train_clean %>% select(amenities_cols) %>% na.omit() %>% cor()
 
 #################### Model training ####################
 train_input <- train_clean %>% select(-PassengerId, -Name, -TotalSpend, -Age)
+train_input <- train_clean %>% select(HomePlanet, CryoSleep, Deck, Side, Destination, Transported)
 
 
 ### GLM ###
@@ -147,12 +152,37 @@ confusionMatrix(fit_knn_allvars)
 ggplot(fit_knn_allvars)
 
 
+### AdaBoost - stumps ### (not used since takes too long to run with many stumps)
+set.seed(123)
+tic()
+# fit_adab_allvars <- train_input %>% train(Transported ~ ., data = ., method = 'adaboost', 
+#                                           tuneGrid = data.frame(nIter = seq(20, 60, 10), method = 'M1'))    
+    #can't get train to work with adaboost or AdaBoost.M1 - just runs indefinitely
+fit_adab_allvars <- train_input %>% boosting(Transported ~ ., data = ., mfinal = 15, control = rpart.control(maxdepth = 1))
+toc()
+confusionMatrix(factor(fit_adab_allvars$class), train_input$Transported)
+plot(fit_adab_allvars$weights)
 
 
-### Ensemble ###
+### AdaBoost - trees ###
+set.seed(123)
+tic()
+fit_adab2_allvars <- train_input %>% adaboost(Transported ~ ., data = ., nIter = 5) #5 is randomly chosen to try avoid overfitting
+  #fastAdaboost always send back full trees, rather than just stumps
+toc()
+confusionMatrix(predict(fit_adab2_allvars, train_input)$class, train_input$Transported)
+plot(fit_adab2_allvars$weights)
+
+
+
+### Ensemble - adaboost is tie breaker###
 predict_ensb_train <- data.frame(glm = predict(fit_glm_allvars), rf = predict(fit_rf_allvars), 
-                                     knn = predict(fit_knn_allvars))
-predict_ensb_train <- predict_ensb_train %>% mutate(maj_vote = ifelse(rowSums(. == 'False')/ncol(.) > 0.5, 'False', 'True'))
+                                 knn = predict(fit_knn_allvars), 
+                                 adab_tree = predict(fit_adab2_allvars, train_input)$class)
+# predict_ensb_train <- predict_ensb_train %>% mutate(maj_vote = ifelse(rowSums(. == 'False')/ncol(.) > 0.5, 'False', 'True'))
+predict_ensb_train <- predict_ensb_train %>% mutate(maj_vote = case_when(rowSums(. == 'False')/ncol(.) == 0.5 ~ as.character(adab_tree),
+                                                                         rowSums(. == 'False')/ncol(.) > 0.5 ~ 'False',
+                                                                         TRUE ~ 'True'))
 predict_ensb_train$maj_vote <- as.factor(predict_ensb_train$maj_vote)
 confusionMatrix(predict_ensb_train$maj_vote, train_input$Transported)
 
@@ -207,12 +237,18 @@ test_input <- test_clean %>% select(-PassengerId, -Name, -TotalSpend, -Age)
 predict_glm_test <- predict(fit_glm_allvars, test_input)
 predict_rf_test <- predict(fit_rf_allvars, test_input)
 predict_knn_test <- predict(fit_knn_allvars, test_input)
+predict_adab2_test <- predict(fit_adab2_allvars, test_input)$class
 
 
-predict_ensb_test <- data.frame(glm = predict_glm_test, rf = predict_rf_test, knn = predict_knn_test)
-predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = ifelse(rowSums(. == 'False')/ncol(.) > 0.5, 'False', 'True'))
+
+predict_ensb_test <- data.frame(glm = predict_glm_test, rf = predict_rf_test, knn = predict_knn_test, 
+                                adab_tree = predict_adab2_test)
+# predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = ifelse(rowSums(. == 'False')/ncol(.) > 0.5, 'False', 'True'))
+predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = case_when(rowSums(. == 'False')/ncol(.) == 0.5 ~ as.character(adab_tree),
+                                                                         rowSums(. == 'False')/ncol(.) > 0.5 ~ 'False',
+                                                                         TRUE ~ 'True'))
 predict_ensb_test$maj_vote <- as.factor(predict_ensb_test$maj_vote)
 
 submission <- data.frame(PassengerId = test_clean$PassengerId, Transported = predict_ensb_test$maj_vote)
-write.csv(submission, 'submissions_v2.csv', row.names = F, quote = F)
+write.csv(submission, 'submissions_v3.csv', row.names = F, quote = F)
 
