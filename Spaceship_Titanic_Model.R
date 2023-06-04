@@ -4,6 +4,7 @@
 ### v2 - tuned/optimised rf mtry parameter; bin age in 10 year bands
 ### v3 - train adaboost with trees (no tuning, parameter chosen approximately), 
 ###       added to ensemble and made it the tie breaker
+### v4 - change adaboost w/tree parameter to 2 to reduce overfitting
 
 #################### Load packages ####################
 library(tidyverse)
@@ -167,7 +168,7 @@ plot(fit_adab_allvars$weights)
 ### AdaBoost - trees ###
 set.seed(123)
 tic()
-fit_adab2_allvars <- train_input %>% adaboost(Transported ~ ., data = ., nIter = 5) #5 is randomly chosen to try avoid overfitting
+fit_adab2_allvars <- train_input %>% adaboost(Transported ~ ., data = ., nIter = 2) #2 is randomly chosen to try avoid overfitting
   #fastAdaboost always send back full trees, rather than just stumps
 toc()
 confusionMatrix(predict(fit_adab2_allvars, train_input)$class, train_input$Transported)
@@ -250,5 +251,5 @@ predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = case_when(rowSums(.
 predict_ensb_test$maj_vote <- as.factor(predict_ensb_test$maj_vote)
 
 submission <- data.frame(PassengerId = test_clean$PassengerId, Transported = predict_ensb_test$maj_vote)
-write.csv(submission, 'submissions_v3.csv', row.names = F, quote = F)
+write.csv(submission, 'submissions_v4.csv', row.names = F, quote = F)
 
