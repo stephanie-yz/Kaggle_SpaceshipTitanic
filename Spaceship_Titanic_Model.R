@@ -5,6 +5,7 @@
 ### v3 - train adaboost with trees (no tuning, parameter chosen approximately), 
 ###       added to ensemble and made it the tie breaker
 ### v4 - change adaboost w/tree parameter to 2 to reduce overfitting
+### v5 - change tiebreaker to be rf
 
 #################### Load packages ####################
 library(tidyverse)
@@ -181,7 +182,7 @@ predict_ensb_train <- data.frame(glm = predict(fit_glm_allvars), rf = predict(fi
                                  knn = predict(fit_knn_allvars), 
                                  adab_tree = predict(fit_adab2_allvars, train_input)$class)
 # predict_ensb_train <- predict_ensb_train %>% mutate(maj_vote = ifelse(rowSums(. == 'False')/ncol(.) > 0.5, 'False', 'True'))
-predict_ensb_train <- predict_ensb_train %>% mutate(maj_vote = case_when(rowSums(. == 'False')/ncol(.) == 0.5 ~ as.character(adab_tree),
+predict_ensb_train <- predict_ensb_train %>% mutate(maj_vote = case_when(rowSums(. == 'False')/ncol(.) == 0.5 ~ as.character(rf),
                                                                          rowSums(. == 'False')/ncol(.) > 0.5 ~ 'False',
                                                                          TRUE ~ 'True'))
 predict_ensb_train$maj_vote <- as.factor(predict_ensb_train$maj_vote)
@@ -245,11 +246,11 @@ predict_adab2_test <- predict(fit_adab2_allvars, test_input)$class
 predict_ensb_test <- data.frame(glm = predict_glm_test, rf = predict_rf_test, knn = predict_knn_test, 
                                 adab_tree = predict_adab2_test)
 # predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = ifelse(rowSums(. == 'False')/ncol(.) > 0.5, 'False', 'True'))
-predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = case_when(rowSums(. == 'False')/ncol(.) == 0.5 ~ as.character(adab_tree),
+predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = case_when(rowSums(. == 'False')/ncol(.) == 0.5 ~ as.character(rf),
                                                                          rowSums(. == 'False')/ncol(.) > 0.5 ~ 'False',
                                                                          TRUE ~ 'True'))
 predict_ensb_test$maj_vote <- as.factor(predict_ensb_test$maj_vote)
 
 submission <- data.frame(PassengerId = test_clean$PassengerId, Transported = predict_ensb_test$maj_vote)
-write.csv(submission, 'submissions_v4.csv', row.names = F, quote = F)
+write.csv(submission, 'submissions_v5.csv', row.names = F, quote = F)
 
