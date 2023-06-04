@@ -1,7 +1,7 @@
 ######################################## Spaceship titanic ########################################
 #################### Version Log ####################
 ### v1 - first attempt: ensemble model with glm, rf and knn; used mostly default settings
-
+### v2 - tuned/optimised rf mtry parameter; bin age in 10 year bands
 
 
 #################### Load packages ####################
@@ -9,10 +9,11 @@ library(tidyverse)
 library(ggplot2)
 library(gridExtra)
 library(caret)
+library(randomForest)
 library(tictoc)
 
 #################### Load data ####################
-wd <- 'C:/Users/steph/OneDrive/Documents/Study/Data Science/Kaggle/Spaceship Titanic'
+wd <- 'C:/Users/HP/Documents/At University/Self-Education/R/Kaggle_Spaceship_Titanic'
 setwd(wd)
 list.files()
 
@@ -55,11 +56,14 @@ train_clean <- train_clean %>% mutate(TotalSpend = RoomService + FoodCourt + Sho
 train_clean <- train_clean %>% separate(Cabin, sep = '/', into = c('Deck', 'Num', 'Side')) %>% 
   mutate(Deck = ifelse(Deck == '', 'UNK', Deck), Num = replace_na(Num, '9999'), Side = replace_na(Side, 'UNK'))
 
+  # age binning - since <10 seem to have higher success rate
+train_clean <- train_clean %>% mutate(Age_bin = cut(Age, breaks = seq(min(Age), max(Age)+1, 10), include.lowest = T))
+
 
 ### Convert data types
 sapply(train_clean, class)
 numeric_cols <- c('Num', 'Age', 'RoomService', 'FoodCourt', 'ShoppingMall', 'Spa', 'VRDeck', 'TotalSpend')
-factor_cols <- c('HomePlanet', 'CryoSleep', 'Deck', 'Side', 'Destination', 'VIP', 'Transported')
+factor_cols <- c('HomePlanet', 'CryoSleep', 'Deck', 'Side', 'Destination', 'VIP', 'Transported', 'Age_bin')
 train_clean[numeric_cols] <- lapply(train_clean[numeric_cols], as.numeric)
 train_clean[factor_cols] <- lapply(train_clean[factor_cols], as.factor)
 
@@ -81,6 +85,8 @@ names(train_clean)[sapply(train_clean, is.numeric)]
 
   #age histogram
 train_clean %>% ggplot(aes(Age)) + geom_histogram(bins = 25, colour = 'blue')
+train_clean %>% ggplot(aes(Age, colour = Transported)) + geom_density() +
+  scale_x_continuous(breaks = seq(0, 80, 5)) + facet_wrap(vars(HomePlanet))
 
   #age boxplot
 train_clean %>% ggplot(aes(HomePlanet, Age)) + geom_boxplot()
@@ -109,7 +115,7 @@ train_clean %>% select(amenities_cols) %>% na.omit() %>% cor()
 
 
 #################### Model training ####################
-train_input <- train_clean %>% select(-PassengerId, -Name, -TotalSpend)
+train_input <- train_clean %>% select(-PassengerId, -Name, -TotalSpend, -Age)
 
 
 ### GLM ###
@@ -122,10 +128,12 @@ fit_glm_allvars$results
 ### Random Forest ###
 set.seed(123)
 tic()
-fit_rf_allvars <- train_input %>% train(Transported ~ ., data = ., method = 'rf', ntree = 100)
+fit_rf_allvars <- train_input %>% train(Transported ~ ., data = ., method = 'rf', ntree = 100,
+                                        tuneGrid = data.frame(mtry = seq(3:9)))
 toc()
 confusionMatrix(fit_rf_allvars)
 plot(fit_rf_allvars$finalModel)
+varImpPlot(fit_rf_allvars$finalModel)
 rf_tree_1 <- getTree(fit_rf_allvars$finalModel, 1, labelVar = T)
 
 
@@ -177,11 +185,14 @@ test_clean <- test_clean %>% mutate(TotalSpend = RoomService + FoodCourt + Shopp
 test_clean <- test_clean %>% separate(Cabin, sep = '/', into = c('Deck', 'Num', 'Side')) %>% 
   mutate(Deck = ifelse(Deck == '', 'UNK', Deck), Num = replace_na(Num, '9999'), Side = replace_na(Side, 'UNK'))
 
+  # age binning - since <10 seem to have higher success rate
+test_clean <- test_clean %>% mutate(Age_bin = cut(Age, breaks = seq(min(Age), max(Age)+1, 10), include.lowest = T))
+
 
 ### Convert data types
 sapply(test_clean, class)
 numeric_cols <- c('Num', 'Age', 'RoomService', 'FoodCourt', 'ShoppingMall', 'Spa', 'VRDeck', 'TotalSpend')
-factor_cols_test <- c('HomePlanet', 'CryoSleep', 'Deck', 'Side', 'Destination', 'VIP')
+factor_cols_test <- c('HomePlanet', 'CryoSleep', 'Deck', 'Side', 'Destination', 'VIP', 'Age_bin')
 test_clean[numeric_cols] <- lapply(test_clean[numeric_cols], as.numeric)
 test_clean[factor_cols_test] <- lapply(test_clean[factor_cols_test], as.factor)
 
@@ -191,7 +202,7 @@ summary(test_clean)
 
 
 #################### Model prediction ####################
-test_input <- test_clean %>% select(-PassengerId, -Name, -TotalSpend)
+test_input <- test_clean %>% select(-PassengerId, -Name, -TotalSpend, -Age)
 
 predict_glm_test <- predict(fit_glm_allvars, test_input)
 predict_rf_test <- predict(fit_rf_allvars, test_input)
@@ -202,6 +213,6 @@ predict_ensb_test <- data.frame(glm = predict_glm_test, rf = predict_rf_test, kn
 predict_ensb_test <- predict_ensb_test %>% mutate(maj_vote = ifelse(rowSums(. == 'False')/ncol(.) > 0.5, 'False', 'True'))
 predict_ensb_test$maj_vote <- as.factor(predict_ensb_test$maj_vote)
 
-submission_v1 <- data.frame(PassengerId = test_clean$PassengerId, Transported = predict_ensb_test$maj_vote)
-write.csv(submission_v1, 'submissions_v1.csv', row.names = F, quote = F)
+submission <- data.frame(PassengerId = test_clean$PassengerId, Transported = predict_ensb_test$maj_vote)
+write.csv(submission, 'submissions_v2.csv', row.names = F, quote = F)
 
